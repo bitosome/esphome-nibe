@@ -1,0 +1,232 @@
+substitutions:
+  device_friendly_name: "NibeGW"
+  device_name: "nibegw"
+  #device_ip: "0.0.0.0"
+  device_make: "NIBE"
+  device_model: "F1255-6 R"
+  package_version: "1.0.0"
+
+  api_key: !secret api_key
+  wifi_ssid: !secret wifi_ssid
+  wifi_password: !secret wifi_password
+  ota_password: !secret ota_password
+
+  log_level: INFO
+  timezone: "Europe/Tallinn"
+
+# packages:
+#   standard_package:
+#     url: https://github.com/bitosome/esphome-nibe
+#     ref: main
+#     refresh: 0d
+#     files:
+#       - nibegw.yaml
+
+# Load nibe component
+external_components:
+  - source: github://bitosome/esphome-nibe
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+    version: recommended
+
+esphome:
+  name: "${device_name}"
+  friendly_name: "${device_friendly_name}"
+  comment: "${device_model} by ${device_make}"
+  name_add_mac_suffix: false
+  min_version: "0.0.1"
+  project:
+    name: "${device_make}.${device_model}"
+    version: "${package_version}"
+  on_boot:
+  - priority: 900.0
+    then:
+      - lambda: |-
+          id(cpu_speed) = ESP.getCpuFreqMHz();
+
+logger:
+  # Enable logging via network and disable serial port
+  level: "${log_level}"
+  baud_rate: 0
+
+globals:
+  # Define a global variable for CPU speed
+  - id: cpu_speed
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+wifi:
+  fast_connect: false
+  power_save_mode: none
+  ssid: "${wifi_ssid}"
+  password: "${wifi_password}"
+  #use_address: "${device_ip}"
+
+  ap:
+    ssid: "${device_name}"
+    password: "${wifi_password}"
+
+time:
+  - platform: sntp
+    id: time_service
+    timezone: ${timezone}
+
+captive_portal:
+
+web_server:
+  port: 80
+
+api:
+  #encryption:
+    #key: "${api_key}"
+
+ota:
+  safe_mode: true
+  password: "${ota_password}"
+
+sensor:
+  # Captures the uptime and updates the human-readable text sensor displayed. This is an internal sensor only.
+  - platform: uptime
+    name: "Uptime"
+    id: sensor_uptime
+    update_interval: 60s
+    entity_category: "diagnostic"
+    internal: true
+    on_raw_value:
+      then:
+        - text_sensor.template.publish:
+            id: uptime_human
+            state: !lambda |-
+              int seconds = round(id(sensor_uptime).raw_state);
+              int days = seconds / (24 * 3600);
+              seconds = seconds % (24 * 3600);
+              int hours = seconds / 3600;
+              seconds = seconds % 3600;
+              int minutes = seconds /  60;
+              seconds = seconds % 60;
+              return (
+                (days ? String(days) + "d " : "") +
+                (hours ? String(hours) + "h " : "") +
+                (minutes ? String(minutes) + "m " : "") +
+                (String(seconds) + "s")
+              ).c_str();
+
+    # Device Memory
+  - platform: template
+    id: esp_memory
+    icon: mdi:memory
+    name: Free Memory
+    lambda: return heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024;
+    unit_of_measurement: "kB"
+    state_class: measurement
+    entity_category: "diagnostic"
+    disabled_by_default: true
+
+  - platform: internal_temperature
+    name: "Internal Temperature"
+    disabled_by_default: true
+    icon: mdi:heat-wave
+
+    # Device CPU Frequency
+  - platform: template
+    name: "CPU Frequency"
+    icon: "mdi:speedometer"
+    accuracy_decimals: 0
+    unit_of_measurement: Mhz
+    disabled_by_default: true
+    lambda: |-
+      return (id(cpu_speed));
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    name: "RSSI"
+    id: sensor_rssi
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+binary_sensor:
+  # Diagnostic sensor for connection
+  - platform: status
+    name: "API Status"
+    id: sensor_status
+    disabled_by_default: true
+
+# Set pins required for LilyGo T-CAN485 board
+output:
+  - platform: gpio
+    id: ENABLE_PIN # Enable the chip
+    pin:
+      number: GPIO19
+      inverted: true
+  - platform: gpio
+    id: SE_PIN # Enable autodirection
+    pin:
+      number: GPIO17
+      inverted: true
+  - platform: gpio
+    id: ENABLE_5V_PIN # Enable 5V pin for RS485 chip
+    pin:
+      number: GPIO16
+      inverted: true
+
+# Configure uart that will be used
+uart:
+  rx_pin: GPIO21
+  tx_pin: GPIO22
+  baud_rate: 9600
+
+# Configure NibeGW
+nibegw:
+  udp:
+    # The target address(s) to send data to. May be a multicast address.
+    # When using Home Assistant: this is your Home Assistant IP.
+    target:
+      - ip: 192.168.0.145
+        port: 9999 #The Nibe Home Assistant integration listens to 9999 by default 
+
+    # List of source address to accept data from, may be empty for no filter
+    source:
+  
+    # Optional port this device will listen to to receive read requests. Defaults to 9999
+    # read_port: 9999
+
+    # Optional port this device will listen to to receive write request. Defaults to 10000
+    # write_port: 10000
+
+  acknowledge:
+    - MODBUS40
+
+  # Constant replies to certain requests cabe made
+  constants:
+    - address: MODBUS40
+      token: ACCESSORY
+      data: [
+            0x0A, # MODBUS version low
+            0x00, # MODBUS version high
+            0x01, # MODBUS address?
+      ]
+
+# Some helper functions to restart ESPHome from HA
+button:
+  - platform: safe_mode
+    name: "Safe mode"
+    id: button_safe_mode
+    icon: mdi:shield-bug-outline
+    entity_category: "diagnostic"
+
+  - platform: restart
+    name: "Reboot Device"
+    id: button_restart
+    icon: mdi:power-cycle
+    entity_category: "diagnostic"
+
+  # Provide a button to reset all defined flash settings.
+  - platform: factory_reset
+    name: "Load Factory Settings"
+    id: factory_reset_all
+    icon: mdi:factory
+    entity_category: "diagnostic"
