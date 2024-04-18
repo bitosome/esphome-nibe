@@ -17,7 +17,7 @@ substitutions:
 # packages:
 #   standard_package:
 #     url: https://github.com/bitosome/esphome-nibe
-#     ref: main
+#     ref: master
 #     refresh: 0d
 #     files:
 #       - nibegw.yaml
@@ -87,6 +87,21 @@ api:
 ota:
   safe_mode: true
   password: "${ota_password}"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: ip_address
+      name: "IP Address"
+      icon: "mdi:wan"
+
+  - platform: template
+    name: "Uptime"
+    id: uptime_human
+    icon: "mdi:timer-check-outline"
+    update_interval: 60s
+    entity_category: "diagnostic"
+    disabled_by_default: true
 
 sensor:
   # Captures the uptime and updates the human-readable text sensor displayed. This is an internal sensor only.
